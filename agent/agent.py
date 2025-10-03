@@ -164,7 +164,7 @@ class CommAgents:
         不能执行的动作概率为0之后，prob中的概率和不为1，这里不需要进行正则化，因为torch.distributions.Categorical
         会将其进行正则化。要注意在训练的过程中没有用到Categorical，所以训练时取执行的动作对应的概率需要再正则化。
         """
-
+        # print(f"[choose_action] prob {prob}")
         action = Categorical(prob).sample().long()
         return action
 
@@ -205,16 +205,36 @@ class CommAgents:
         max_episode_len = self._get_max_episode_len(batch)
         for key in batch.keys():
             batch[key] = batch[key][:, :max_episode_len]
+
+        # --- ここから: 報酬デバッグ出力 ---
+        if 'r' in batch:
+            r = batch['r']  # shape: (B, T, 1) のはず
+            B, T, _ = r.shape
+            # 要約統計
+            r_mean = r.mean()
+            r_std  = r.std()
+            r_min  = r.min()
+            r_max  = r.max()
+            # エピソードごとの合計報酬
+            ep_sum = r.sum(axis=(1, 2))              # shape: (B,)
+            # 非ゼロ報酬が出たステップ数（エピソード別）
+            ep_nz  = (r != 0).sum(axis=(1, 2))       # shape: (B,)
+
+            # print(f"[r] shape={r.shape} mean={r_mean:.3f} std={r_std:.3f} "
+            #     f"min={r_min:.3f} max={r_max:.3f}")
+            # print(f"[r] ep_sum[:5]={ep_sum[:min(5, B)]}  ep_nonzero[:5]={ep_nz[:min(5, B)]}")
+
+            # 代表でエピソード0の“報酬が出たタイミング”を表示（タグ等の瞬間）
+            nz_t = np.where(r[0, :, 0] != 0)[0]
+            # print(f"[r] ep0 nonzero steps (count={len(nz_t)}): {nz_t[:20]}")
+
+            # 正の報酬（adversary ならタグの候補）だけ抜く例
+            pos_t = np.where(r[0, :, 0] > 0)[0]
+            if len(pos_t) > 0:
+                # print(f"[r] ep0 positive steps (likely tags): {pos_t[:20]}")
+                pass
+        # --- ここまで ---
+
         self.policy.learn(batch, max_episode_len, train_step, epsilon)
         if train_step > 0 and train_step % self.args.save_cycle == 0:
             self.policy.save_model(train_step)
-
-
-
-
-
-
-
-
-
-

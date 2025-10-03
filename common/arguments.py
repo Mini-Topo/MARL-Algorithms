@@ -8,30 +8,58 @@ Here are the param for the training
 
 def get_common_args():
     parser = argparse.ArgumentParser()
-    # the environment setting
-    parser.add_argument('--difficulty', type=str, default='7', help='the difficulty of the game')
-    parser.add_argument('--game_version', type=str, default='latest', help='the version of the game')
-    parser.add_argument('--map', type=str, default='5m_vs_6m', help='the map of the game')
-    parser.add_argument('--seed', type=int, default=123, help='random seed')
-    parser.add_argument('--step_mul', type=int, default=8, help='how many steps to make an action')
-    parser.add_argument('--replay_dir', type=str, default='', help='absolute path to save the replay')
-    # The alternative algorithms are vdn, coma, central_v, qmix, qtran_base,
-    # qtran_alt, reinforce, coma+commnet, central_v+commnet, reinforce+commnet，
-    # coma+g2anet, central_v+g2anet, reinforce+g2anet, maven
-    parser.add_argument('--alg', type=str, default='reinforce+g2anet', help='the algorithm to train the agent')
-    parser.add_argument('--n_steps', type=int, default=2000000, help='total time steps')
-    parser.add_argument('--n_episodes', type=int, default=1, help='the number of episodes before once training')
-    parser.add_argument('--last_action', type=bool, default=True, help='whether to use the last action to choose action')
-    parser.add_argument('--reuse_network', type=bool, default=True, help='whether to use one network for all agents')
-    parser.add_argument('--gamma', type=float, default=0.99, help='discount factor')
-    parser.add_argument('--optimizer', type=str, default="RMS", help='optimizer')
-    parser.add_argument('--evaluate_cycle', type=int, default=5000, help='how often to evaluate the model')
-    parser.add_argument('--evaluate_epoch', type=int, default=32, help='number of the epoch to evaluate the agent')
-    parser.add_argument('--model_dir', type=str, default='./model', help='model directory of the policy')
-    parser.add_argument('--result_dir', type=str, default='./result', help='result directory of the policy')
-    parser.add_argument('--load_model', type=bool, default=False, help='whether to load the pretrained model')
-    parser.add_argument('--evaluate', type=bool, default=False, help='whether to evaluate the model')
-    parser.add_argument('--cuda', type=bool, default=False, help='whether to use the GPU')
+
+    # ===== 保存用ラベル（Runnerのsave_path互換のため残す） =====
+    parser.add_argument('--map', type=str, default='simple_tag_v3_adversary',
+                        help='used only for saving dirs (label)')
+
+    # ===== PettingZoo simple_tag_v3 用 =====
+    parser.add_argument('--episode_limit', type=int, default=1000)
+    parser.add_argument('--num_good', type=int, default=2)
+    parser.add_argument('--num_adversaries', type=int, default=5)
+    parser.add_argument('--num_obstacles', type=int, default=1)
+    parser.add_argument('--control_team', type=str, default='adversary',
+                        choices=['adversary', 'good'])
+    parser.add_argument('--opponent_policy', type=str, default='random',
+                        choices=['random', 'still', 'up', 'scripted'])
+    parser.add_argument('--seed', type=int, default=123)
+
+    # 可視化（学習時は基本オフ）
+    parser.add_argument('--render', action='store_true', help='use human render')
+    parser.add_argument('--render_eval', action='store_true',
+                        help='show a human-rendered window during evaluation')
+
+    # ===== アルゴリズム共通 =====
+    parser.add_argument('--alg', type=str, default='reinforce+g2anet')
+    parser.add_argument('--n_steps', type=int, default=1000)
+    parser.add_argument('--n_episodes', type=int, default=1)
+    parser.add_argument('--gamma', type=float, default=0.99)
+    parser.add_argument('--optimizer', type=str, default='RMS')
+
+    parser.add_argument('--evaluate_cycle', type=int, default=10000)
+    parser.add_argument('--evaluate_epoch', type=int, default=32)
+    parser.add_argument('--model_dir', type=str, default='./model')
+    parser.add_argument('--result_dir', type=str, default='./result')
+
+    # ===== フラグ類は action で =====
+    parser.add_argument('--load_model', action='store_true')
+    parser.add_argument('--evaluate', action='store_true')
+    parser.add_argument('--cuda', action='store_true')
+
+    parser.add_argument('--last_action', action='store_true', help='append last action to obs')
+    parser.add_argument('--no-last_action', dest='last_action', action='store_false')
+    parser.set_defaults(last_action=True)
+
+    parser.add_argument('--reuse_network', action='store_true', help='share params across agents')
+    parser.add_argument('--no-reuse_network', dest='reuse_network', action='store_false')
+    parser.set_defaults(reuse_network=True)
+
+    # ===== オプション（任意の評価規則） =====
+    parser.add_argument('--timeout_win_for', type=str, default='good',
+                        choices=['good', 'adversary'])
+    parser.add_argument('--capture_win_for', type=str, default='adversary',
+                        choices=['good', 'adversary'])
+
     args = parser.parse_args()
     return args
 

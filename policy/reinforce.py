@@ -56,43 +56,112 @@ class Reinforce:
         # 学习过程中，要为每个episode的每个agent都维护一个eval_hidden
         self.eval_hidden = None
 
+        self.rnn_parameters = list(self.eval_rnn.parameters())
+        if args.optimizer == "RMS":
+            self.rnn_optimizer = torch.optim.RMSprop(self.rnn_parameters, lr=args.lr_actor)
+
+    # 可視化用の状態（EMA）
+    _ema_W = None
+    _ema_beta = 0.8
+    _thr_weight = 0.0   # Visualizer側で arrow_on_threshold を使うなら 0.0 でOK
+    _thr_hard = 0.5     # hard のON確率の最低閾値（G2ANet側で使ってもOK）
+
+    def links(self, world):
+        """Visualizer が期待する [(i, j, w), ...] を返す。
+        i: 受け手（矢印の先）, j: 送り手（矢印の元）, w: 重み [0,1]
+        """
+        net = self.eval_rnn
+
+        # G2ANet 以外（RNN/CommNet）はリンク無し
+        if not hasattr(net, "link_matrix"):
+            return []
+
+        W = net.link_matrix()  # shape [n, n] or None
+        if W is None:
+            return []
+
+        links = []
+        n = W.shape[0]
+        thr = getattr(self, "_thr_weight", 0.0)  # 例: 可視化の最小表示しきい値
+        for i in range(n):
+            for j in range(n):
+                if i == j:
+                    continue
+                w = float(W[i, j])
+                # hard=0 の箇所は W が 0 のはず → 自然に外れる
+                if w >= thr:
+                    links.append((i, j, w))
+        return links
+
+
+    # ★ 追加: Runner などから学習対象パラメータを標準的に取得できるようにする
+    def parameters(self):
+        return self.eval_rnn.parameters()
+
+    # ★ 追加: 名前はそのまま残したい場合の互換（callableにする）
+    def rnn_parameters(self):
+        return self.eval_rnn.parameters()
+
     def learn(self, batch, max_episode_len, train_step, epsilon):
         episode_num = batch['o'].shape[0]
         self.init_hidden(episode_num)
-        for key in batch.keys():  # 把batch里的数据转化成tensor
+        for key in batch.keys():  # to tensor
             if key == 'u':
                 batch[key] = torch.tensor(batch[key], dtype=torch.long)
             else:
                 batch[key] = torch.tensor(batch[key], dtype=torch.float32)
+
         u, r, avail_u, terminated = batch['u'], batch['r'],  batch['avail_u'], batch['terminated']
-        mask = (1 - batch["padded"].float())  # 用来把那些填充的经验的TD-error置0，从而不让它们影响到学习
+        mask = (1 - batch["padded"].float())  # (B,T,1)
         if self.args.cuda:
-            r = r.cuda()
-            u = u.cuda()
-            mask = mask.cuda()
-            terminated = terminated.cuda()
+            r = r.cuda(); u = u.cuda(); mask = mask.cuda(); terminated = terminated.cuda()
 
-        # 得到每条经验的return, (episode_num, max_episode_len， n_agents)
-        n_return = self._get_returns(r, mask, terminated, max_episode_len)
+        # returns: (B,T,1) → expand to (B,T,n_agents)
+        n_return = self._get_returns(r, mask, terminated, max_episode_len)  # (B,T,n_agents)
 
-        # 每个agent的所有动作的概率 (episode_num, max_episode_len， n_agents，n_actions)
+        # action prob: (B,T,n_agents,n_actions)
         action_prob = self._get_action_prob(batch, max_episode_len, epsilon)
 
-        # 给mask转换出n_agents维度，用于每个agent的训练
-        mask = mask.repeat(1, 1, self.n_agents)
-        # 每个agent的选择的动作对应的概率 (episode_num, max_episode_len， n_agents)
-        pi_taken = torch.gather(action_prob, dim=3, index=u).squeeze(3)
-        pi_taken[mask == 0] = 1.0  # 因为要取对数，对于那些填充的经验，所有概率都为0，取了log就是负无穷了，所以让它们变成1
-        log_pi_taken = torch.log(pi_taken)
+        # mask を (B,T,n_agents) に
+        mask_agents = mask.repeat(1, 1, self.n_agents)
 
-        # loss函数，(episode_num, max_episode_len, n_agents)
-        loss = - ((n_return * log_pi_taken) * mask).sum() / mask.sum()
+        # 取った行動の確率 (B,T,n_agents,1)→(B,T,n_agents)
+        pi_taken = torch.gather(action_prob, dim=3, index=u).squeeze(3)
+        pi_taken[mask_agents == 0] = 1.0  # log(1)=0 → パディング無影響
+        log_pi_taken = torch.log(pi_taken + 1e-12)
+
+        loss = - ((n_return * log_pi_taken) * mask_agents).sum() / (mask_agents.sum() + 1e-12)
+
         self.rnn_optimizer.zero_grad()
         loss.backward()
+
+        # ★ grad_norm を測る
+        total_norm = 0.0
+        for p in self.eval_rnn.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2).item()
+                total_norm += param_norm ** 2
+        total_norm = total_norm ** 0.5
+
         if self.args.alg == 'reinforce+g2anet':
-            torch.nn.utils.clip_grad_norm_(self.rnn_parameters, self.args.grad_norm_clip)
+            torch.nn.utils.clip_grad_norm_(self.eval_rnn.parameters(), self.args.grad_norm_clip)
+
         self.rnn_optimizer.step()
-        # print('Actor loss is', loss)
+
+        # ★ 参考メトリクス: エントロピー（平均）
+        with torch.no_grad():
+            p = torch.clamp(action_prob, min=1e-12)
+            ent = -(p * torch.log(p)).sum(dim=-1)  # (B,T,n_agents)
+            entropy = (ent * mask_agents).sum() / (mask_agents.sum() + 1e-12)
+
+        # ★ メトリクスを返す（Runnerが受け取ってログ可）
+        return {
+            "loss": float(loss.detach().cpu().item()),
+            "grad_norm": float(total_norm),
+            "entropy": float(entropy.detach().cpu().item()),
+            "return_mean": float(n_return.detach().mean().cpu().item()),
+            "reward_mean": float(r.detach().mean().cpu().item()),
+        }
 
     def _get_returns(self, r, mask, terminated, max_episode_len):
         r = r.squeeze(-1)

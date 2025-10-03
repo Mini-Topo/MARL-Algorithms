@@ -22,12 +22,12 @@ class RolloutWorker:
 
     @torch.no_grad()
     def generate_episode(self, episode_num=None, evaluate=False):
-        if self.args.replay_dir != '' and evaluate and episode_num == 0:  # prepare for save replay of evaluation
-            self.env.close()
+        # if self.args.replay_dir != '' and evaluate and episode_num == 0:  # prepare for save replay of evaluation
+        #     self.env.close()
         o, u, r, s, avail_u, u_onehot, terminate, padded = [], [], [], [], [], [], [], []
         self.env.reset()
         terminated = False
-        win_tag = False
+        tag_count = 0
         step = 0
         episode_reward = 0  # cumulative rewards
         last_action = np.zeros((self.args.n_agents, self.args.n_actions))
@@ -64,13 +64,13 @@ class RolloutWorker:
                 # generate onehot vector of th action
                 action_onehot = np.zeros(self.args.n_actions)
                 action_onehot[action] = 1
-                actions.append(np.int(action))
+                actions.append(int(action))
                 actions_onehot.append(action_onehot)
                 avail_actions.append(avail_action)
                 last_action[agent_id] = action_onehot
 
             reward, terminated, info = self.env.step(actions)
-            win_tag = True if terminated and 'battle_won' in info and info['battle_won'] else False
+            tag_count += int(info.get("step_tags", 0))
             o.append(obs)
             s.append(state)
             u.append(np.reshape(actions, [self.n_agents, 1]))
@@ -134,10 +134,10 @@ class RolloutWorker:
             self.epsilon = epsilon
         if self.args.alg == 'maven':
             episode['z'] = np.array([maven_z.copy()])
-        if evaluate and episode_num == self.args.evaluate_epoch - 1 and self.args.replay_dir != '':
-            self.env.save_replay()
-            self.env.close()
-        return episode, episode_reward, win_tag, step
+        # if evaluate and episode_num == self.args.evaluate_epoch - 1 and self.args.replay_dir != '':
+        #     self.env.save_replay()
+        #     self.env.close()
+        return episode, episode_reward, tag_count, step
 
 
 # RolloutWorker for communication
@@ -155,16 +155,17 @@ class CommRolloutWorker:
         self.epsilon = args.epsilon
         self.anneal_epsilon = args.anneal_epsilon
         self.min_epsilon = args.min_epsilon
+
         print('Init CommRolloutWorker')
 
     @torch.no_grad()
-    def generate_episode(self, episode_num=None, evaluate=False):
-        if self.args.replay_dir != '' and evaluate and episode_num == 0:  # prepare for save replay
-            self.env.close()
+    def generate_episode(self, episode_num=None, evaluate=False, render=False, render_interval=1, on_step=None):
+        # if self.args.replay_dir != '' and evaluate and episode_num == 0:  # prepare for save replay
+        #     self.env.close()
         o, u, r, s, avail_u, u_onehot, terminate, padded = [], [], [], [], [], [], [], []
         self.env.reset()
         terminated = False
-        win_tag = False
+        tag_count = 0
         step = 0
         episode_reward = 0
         last_action = np.zeros((self.args.n_agents, self.args.n_actions))
@@ -179,23 +180,42 @@ class CommRolloutWorker:
             actions, avail_actions, actions_onehot = [], [], []
 
             # get the weights of all actions for all agents
+            # print(np.array(obs), last_action)
             weights = self.agents.get_action_weights(np.array(obs), last_action)
 
             # choose action for each agent
             for agent_id in range(self.n_agents):
                 avail_action = self.env.get_avail_agent_actions(agent_id)
+                # print(f"[step {step} agent {agent_id}] avail {avail_action}")
+                # print(weights)
                 action = self.agents.choose_action(weights[agent_id], avail_action, epsilon)
 
                 # generate onehot vector of th action
                 action_onehot = np.zeros(self.args.n_actions)
                 action_onehot[action] = 1
-                actions.append(np.int(action))
+                actions.append(int(action))
                 actions_onehot.append(action_onehot)
                 avail_actions.append(avail_action)
                 last_action[agent_id] = action_onehot
 
             reward, terminated, info = self.env.step(actions)
-            win_tag = True if terminated and 'battle_won' in info and info['battle_won'] else False
+
+            if on_step is not None:
+                try:
+                    on_step()
+                except Exception:
+                    print(f"[on_step error] {Exception}")
+                    pass
+
+            # 観戦用：各ステップで描画
+            if render and (step % render_interval == 0):
+                try:
+                    self.env.render()
+                except Exception as e:
+                    print(f"[render skipped] {e}")
+                    pass
+
+            tag_count += int(info.get("step_tags", 0))
             o.append(obs)
             s.append(state)
             u.append(np.reshape(actions, [self.n_agents, 1]))
@@ -206,8 +226,7 @@ class CommRolloutWorker:
             padded.append([0.])
             episode_reward += reward
             step += 1
-            # if terminated:
-            #     time.sleep(1)
+
             if self.args.epsilon_anneal_scale == 'step':
                 epsilon = epsilon - self.anneal_epsilon if epsilon > self.min_epsilon else epsilon
         # last obs
@@ -260,7 +279,7 @@ class CommRolloutWorker:
         if not evaluate:
             self.epsilon = epsilon
             # print('Epsilon is ', self.epsilon)
-        if evaluate and episode_num == self.args.evaluate_epoch - 1 and self.args.replay_dir != '':
-            self.env.save_replay()
-            self.env.close()
-        return episode, episode_reward, win_tag, step
+        # if evaluate and episode_num == self.args.evaluate_epoch - 1 and self.args.replay_dir != '':
+        #     self.env.save_replay()
+        #     self.env.close()
+        return episode, episode_reward, tag_count, step
