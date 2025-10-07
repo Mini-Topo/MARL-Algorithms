@@ -11,16 +11,17 @@ class Reinforce:
         self.n_agents = args.n_agents
         self.state_shape = args.state_shape
         self.obs_shape = args.obs_shape
-        actor_input_shape = self.obs_shape  # actor网络输入的维度，和vdn、qmix的rnn输入维度一样，使用同一个网络结构
-        # 根据参数决定RNN的输入维度
+        actor_input_shape = self.obs_shape  # アクター（actor）ネットワークの入力次元は、VDNやQMIXのRNNの入力次元と同じであり、同じネットワーク構造を使用している。
+        # パラメータに応じて RNN の入力次元を決定する。
         if args.last_action:
             actor_input_shape += self.n_actions
         if args.reuse_network:
             actor_input_shape += self.n_agents
         self.args = args
 
-        # 神经网络
-        # 每个agent选动作的网络,输出当前agent所有动作对应的概率，用该概率选动作的时候还需要用softmax再运算一次。
+        # ニューラルネットワーク
+        # 各エージェントが行動を選択するためのネットワークであり、現在のエージェントに対するすべての行動の確率を出力する。
+        # この確率を使って実際に行動を選ぶ際には、さらに softmax を一度かけて計算する必要がある。
         if self.args.alg == 'reinforce':
             print('Init alg reinforce')
             self.eval_rnn = RNN(actor_input_shape, args)
@@ -37,7 +38,7 @@ class Reinforce:
             self.eval_rnn.cuda()
 
         self.model_dir = args.model_dir + '/' + args.alg + '/' + args.map
-        # 如果存在模型则加载模型
+        # モデルが存在する場合は、そのモデルを読み込む。
         if self.args.load_model:
             if os.path.exists(self.model_dir + '/rnn_params.pkl'):
                 path_rnn = self.model_dir + '/rnn_params.pkl'
@@ -52,13 +53,9 @@ class Reinforce:
             self.rnn_optimizer = torch.optim.RMSprop(self.rnn_parameters, lr=args.lr_actor)
         self.args = args
 
-        # 执行过程中，要为每个agent都维护一个eval_hidden
-        # 学习过程中，要为每个episode的每个agent都维护一个eval_hidden
+        # 実行中は、各エージェントごとに eval_hidden を保持する必要がある。
+        # 学習中は、各エピソード内の各エージェントごとに eval_hidden を保持する必要がある。
         self.eval_hidden = None
-
-        self.rnn_parameters = list(self.eval_rnn.parameters())
-        if args.optimizer == "RMS":
-            self.rnn_optimizer = torch.optim.RMSprop(self.rnn_parameters, lr=args.lr_actor)
 
     # 可視化用の状態（EMA）
     _ema_W = None

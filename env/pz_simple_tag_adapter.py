@@ -79,7 +79,7 @@ class PZSimpleTagAdapter:
 
         self.adv_reward_mode = "at_least_k_goods"  # "env" / "at_least_k_goods"
         self.adv_reward_k = 2         # k >= 1
-        self.adv_bonus = 20.0
+        self.adv_bonus = 100.0
         self.adv_scale_by_goods = True # k倍ボーナスにするか
         self.adv_combine = "add"      # "add" / "replace"
 
@@ -183,7 +183,7 @@ class PZSimpleTagAdapter:
         self._tag_count = 0
         self._d_prev = None
         # Good の初期位置を固定
-        self._place_goods_with_spacing(spacing=2.0, center=0.0, y=0.0, clamp=True)
+        self._place_goods_with_spacing(spacing=0.4, center=0.0, y=0.0, clamp=True)
 
         return  # SMAC 互換：返り値なし
 
